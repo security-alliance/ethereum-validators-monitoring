@@ -112,7 +112,6 @@ export class StateService {
       let status = this.getValidatorStatus(validator, epoch);
       let isSlashed = false;
 
-      // Check if this validator should be slashed
       if (
         this.operatorSlashingConfig &&
         epoch >= this.operatorSlashingConfig.slashAtEpoch &&
@@ -120,7 +119,6 @@ export class StateService {
       ) {
         let slashedState = this.slashedValidators.get(pubkey);
 
-        // New validator to be slashed
         if (!slashedState && this.slashedNodeCount < this.operatorSlashingConfig.nodesToSlash) {
           slashedState = {
             slashed: true,
@@ -135,7 +133,6 @@ export class StateService {
           );
         }
 
-        // Apply slashed state if this validator was slashed
         if (slashedState) {
           currentBalance = slashedState.slashedBalance;
           isSlashed = true;
@@ -161,16 +158,25 @@ export class StateService {
         val_status: status,
         val_balance: currentBalance,
         val_effective_balance: isSlashed
-          ? BigInt(Math.min(Number(currentBalance), Number(validator.effectiveBalance)))
+          ? currentBalance < BigInt(validator.effectiveBalance)
+            ? currentBalance
+            : BigInt(validator.effectiveBalance)
           : BigInt(validator.effectiveBalance),
         val_stuck: stuckKeys.includes(pubkey),
       };
+
+      if (v.val_slashed) {
+        this.logger.log(
+          'Slashed validator state:',
+          JSON.stringify(v, (_, value) => (typeof value === 'bigint' ? value.toString() : value)),
+        );
+      }
 
       this.summary.epoch(epoch).set(v);
 
       if ([ValStatus.ActiveOngoing, ValStatus.ActiveExiting, ValStatus.ActiveSlashed].includes(status)) {
         activeValidatorsCount++;
-        activeValidatorsEffectiveBalance += BigInt(v.val_effective_balance) / BigInt(10 ** 9);
+        activeValidatorsEffectiveBalance += v.val_effective_balance / BigInt(10 ** 9);
       }
     }
 
