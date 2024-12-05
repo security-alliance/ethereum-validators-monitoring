@@ -219,25 +219,6 @@ export class ConsensusProviderService {
   protected ForkName: typeof import('@lodestar/params').ForkName;
 
   public async getState(stateId: StateId): Promise<ContainerTreeViewType<typeof anySsz.BeaconState.fields>> {
-    const { body, headers } = await this.retryRequest<{ body: BodyReadable; headers: IncomingHttpHeaders }>(
-      async (apiURL: string) => await this.apiGetStream(apiURL, this.endpoints.state(stateId), { accept: 'application/octet-stream' }),
-      {
-        dataOnly: false,
-      },
-    );
-
-    const forkName = headers['eth-consensus-version'];
-    if (!forkName) {
-      throw new Error('Missing eth-consensus-version header in response');
-    }
-
-    // Validate fork name using ForkName enum
-    if (!Object.values(this.ForkName).includes(forkName as any)) {
-      throw new Error(`Unknown fork name: ${forkName}`);
-    }
-
-    const bodyBytes = new Uint8Array(await body.arrayBuffer());
-
     // Initialize SSZ if not already done
     if (!this.ssz) {
       const lodestarTypes = await import('@lodestar/types');
@@ -246,7 +227,48 @@ export class ConsensusProviderService {
       this.ForkName = lodestarParams.ForkName;
     }
 
-    // Now TypeScript knows forkName is a valid key
+    const { body, headers } = await this.retryRequest<{ body: BodyReadable; headers: IncomingHttpHeaders }>(
+      async (apiURL: string) =>
+        await this.apiGetStream(apiURL, this.endpoints.state(stateId), {
+          accept: 'application/octet-stream',
+          'Accept-Version': 'ethereum-beacon-chain-v2',
+        }),
+      {
+        dataOnly: false,
+      },
+    );
+
+    const bodyBytes = new Uint8Array(await body.arrayBuffer());
+
+    // Debug log to inspect the returned data
+    this.logger.debug(`Received state data for stateId ${stateId}: ${bodyBytes.length} bytes`);
+
+    // Try to get fork version from headers first
+    let forkName = headers['eth-consensus-version'];
+
+    if (!forkName) {
+      this.logger.debug('eth-consensus-version header missing, attempting to determine version from state data');
+
+      const versions = Object.values(this.ForkName).reverse();
+
+      for (const version of versions) {
+        try {
+          const state = this.ssz[version].BeaconState.deserializeToView(bodyBytes);
+          forkName = version;
+          this.logger.debug(`Successfully determined state version: ${version}`);
+          return state as any;
+        } catch (e) {
+          continue;
+        }
+      }
+
+      throw new Error('Failed to determine beacon state version - no compatible fork version found');
+    }
+
+    if (!Object.values(this.ForkName).includes(forkName as any)) {
+      throw new Error(`Unknown fork name: ${forkName}`);
+    }
+
     try {
       return this.ssz[forkName as string].BeaconState.deserializeToView(bodyBytes);
     } catch (error) {
