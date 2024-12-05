@@ -227,9 +227,14 @@ export class ConsensusProviderService {
     for (const [key, value] of Object.entries(headers)) {
       this.logger.log(`${key}: ${value}`);
     }
-
-    const forkName = headers['eth-consensus-version'] as keyof typeof ForkName;
+  
+    // Parse the body to get the fork version if not present in headers
     const bodyBytes = new Uint8Array(await body.arrayBuffer());
+    const bodyJson = JSON.parse(new TextDecoder().decode(bodyBytes));
+    const forkName = (headers['eth-consensus-version'] || bodyJson.version) as keyof typeof ForkName;
+    
+    this.logger.log(`Fork name: ${forkName}`);
+  
     this.logger.log(`Received state data for stateId ${stateId}: ${bodyBytes.length} bytes`);
     // ugly hack to import ESModule to CommonJS project
     ssz = await eval(`import('@lodestar/types').then((m) => m.ssz)`);
