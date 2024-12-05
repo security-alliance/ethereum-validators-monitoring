@@ -249,6 +249,7 @@ export class ConsensusProviderService {
     if (!forkName) {
       this.logger.debug('eth-consensus-version header missing, attempting to determine version from state data');
 
+      // Try versions from newest to oldest
       const versions = Object.values(this.ForkName).reverse();
 
       for (const version of versions) {
@@ -265,12 +266,13 @@ export class ConsensusProviderService {
       throw new Error('Failed to determine beacon state version - no compatible fork version found');
     }
 
+    // Validate fork name using ForkName enum
     if (!Object.values(this.ForkName).includes(forkName as any)) {
       throw new Error(`Unknown fork name: ${forkName}`);
     }
 
     try {
-      return this.ssz[forkName as string].BeaconState.deserializeToView(bodyBytes);
+      return this.ssz[forkName as string].BeaconState.deserializeToView(bodyBytes) as any;
     } catch (error) {
       throw new Error(`Failed to deserialize beacon state: ${error.message}`);
     }
