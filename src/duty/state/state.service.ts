@@ -115,7 +115,9 @@ export class StateService {
       if (
         this.operatorSlashingConfig &&
         epoch >= this.operatorSlashingConfig.slashAtEpoch &&
-        operator?.operatorIndex === this.operatorSlashingConfig.operatorIndex
+        operator?.operatorIndex === this.operatorSlashingConfig.operatorIndex &&
+        originalBalance >= SLASHING_PENALTY &&
+        ![ValStatus.ExitedSlashed, ValStatus.ExitedUnslashed, ValStatus.WithdrawalPossible, ValStatus.WithdrawalDone].includes(status)
       ) {
         let slashedState = this.slashedValidators.get(pubkey);
 
