@@ -117,7 +117,7 @@ export class StateService {
         epoch >= this.operatorSlashingConfig.slashAtEpoch &&
         operator?.operatorIndex === this.operatorSlashingConfig.operatorIndex &&
         originalBalance >= SLASHING_PENALTY &&
-        ![ValStatus.ExitedSlashed, ValStatus.ExitedUnslashed, ValStatus.WithdrawalPossible, ValStatus.WithdrawalDone].includes(status)
+        status === ValStatus.ActiveOngoing // Only slash active ongoing validators
       ) {
         let slashedState = this.slashedValidators.get(pubkey);
 
