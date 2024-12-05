@@ -215,6 +215,9 @@ export class ConsensusProviderService {
     return (await this.getPreviousNotMissedBlockHeader(dutyRootSlot, this.defaultMaxSlotDeepCount, ignoreCache)).root;
   }
 
+  protected ssz: typeof import('@lodestar/types').ssz;
+  protected ForkName: typeof import('@lodestar/params').ForkName;
+
   public async getState(stateId: StateId): Promise<ContainerTreeViewType<typeof anySsz.BeaconState.fields>> {
     const { body, headers } = await this.retryRequest<{ body: BodyReadable; headers: IncomingHttpHeaders }>(
       async (apiURL: string) => await this.apiGetStream(apiURL, this.endpoints.state(stateId), { accept: 'application/octet-stream' }),
@@ -222,11 +225,33 @@ export class ConsensusProviderService {
         dataOnly: false,
       },
     );
-    const forkName = headers['eth-consensus-version'] as keyof typeof ForkName;
+
+    const forkName = headers['eth-consensus-version'];
+    if (!forkName) {
+      throw new Error('Missing eth-consensus-version header in response');
+    }
+
+    // Validate fork name using ForkName enum
+    if (!Object.values(this.ForkName).includes(forkName as any)) {
+      throw new Error(`Unknown fork name: ${forkName}`);
+    }
+
     const bodyBytes = new Uint8Array(await body.arrayBuffer());
-    // ugly hack to import ESModule to CommonJS project
-    ssz = await eval(`import('@lodestar/types').then((m) => m.ssz)`);
-    return ssz[forkName].BeaconState.deserializeToView(bodyBytes) as any as ContainerTreeViewType<typeof anySsz.BeaconState.fields>;
+
+    // Initialize SSZ if not already done
+    if (!this.ssz) {
+      const lodestarTypes = await import('@lodestar/types');
+      this.ssz = lodestarTypes.ssz;
+      const lodestarParams = await import('@lodestar/params');
+      this.ForkName = lodestarParams.ForkName;
+    }
+
+    // Now TypeScript knows forkName is a valid key
+    try {
+      return this.ssz[forkName as string].BeaconState.deserializeToView(bodyBytes);
+    } catch (error) {
+      throw new Error(`Failed to deserialize beacon state: ${error.message}`);
+    }
   }
 
   public async getBlockInfo(blockId: BlockId): Promise<BlockInfoResponse | void> {
