@@ -293,6 +293,22 @@ export class EnvironmentVariables {
 
   @IsEnum(WorkingMode)
   public WORKING_MODE = WorkingMode.Finalized;
+
+  @IsBoolean()
+  @Transform(({ value }) => toBoolean(value), { toClassOnly: true })
+  public SIMULATED_SLASHING_ACTIVE = false;
+
+  @IsInt()
+  @Transform(({ value }) => parseInt(value, 10), { toClassOnly: true })
+  public SLASHING_OPERATOR_INDEX = 28;
+
+  @IsInt()
+  @Transform(({ value }) => parseInt(value, 10), { toClassOnly: true })
+  public SLASHING_NODES_TO_SLASH = 0;
+
+  @IsInt()
+  @Transform(({ value }) => parseInt(value, 10), { toClassOnly: true })
+  public SLASHING_EPOCH = 100;
 }
 
 export function validate(config: Record<string, unknown>) {

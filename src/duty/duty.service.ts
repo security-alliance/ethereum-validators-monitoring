@@ -39,7 +39,17 @@ export class DutyService {
     protected readonly storage: ClickhouseService,
     protected readonly rewards: DutyRewards,
     protected readonly withdrawals: WithdrawalsService,
-  ) {}
+  ) {
+    // Only set slashing configuration if simulation is active
+    if (this.config.get('SIMULATED_SLASHING_ACTIVE')) {
+      const operatorIndex = this.config.get('SLASHING_OPERATOR_INDEX');
+      const nodesToSlash = this.config.get('SLASHING_NODES_TO_SLASH');
+      const slashAtEpoch = this.config.get('SLASHING_EPOCH');
+
+      this.logger.log('Initializing simulated slashing configuration');
+      this.state.setSlashingConfig(operatorIndex, nodesToSlash, slashAtEpoch);
+    }
+  }
 
   public async checkAndWrite({ epoch, stateSlot }: { epoch: Epoch; stateSlot: Slot }): Promise<string[]> {
     const workingMode = this.config.get('WORKING_MODE');

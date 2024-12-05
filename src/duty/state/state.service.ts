@@ -17,6 +17,7 @@ import { ClickhouseService } from 'storage/clickhouse';
 import { RegistryService } from 'validators-registry';
 
 const FAR_FUTURE_EPOCH = Infinity;
+const SLASHING_PENALTY = BigInt(1000000000); // 1 ETH in Gwei
 
 type Validators = ListCompositeTreeView<
   ContainerNodeStructType<{
@@ -31,8 +32,25 @@ type Validators = ListCompositeTreeView<
   }>
 >;
 
+interface OperatorSlashingConfig {
+  operatorIndex: number;
+  nodesToSlash: number;
+  slashAtEpoch: number;
+}
+
+interface SlashedValidatorState {
+  slashed: boolean;
+  slashedBalance: bigint;
+  exitEpoch: number;
+  withdrawableEpoch: number;
+}
+
 @Injectable()
 export class StateService {
+  private operatorSlashingConfig: OperatorSlashingConfig | null = null;
+  private slashedValidators = new Map<string, SlashedValidatorState>();
+  private slashedNodeCount = 0;
+
   public constructor(
     @Inject(LOGGER_PROVIDER) protected readonly logger: LoggerService,
     protected readonly config: ConfigService,
@@ -42,6 +60,24 @@ export class StateService {
     protected readonly storage: ClickhouseService,
     protected readonly registry: RegistryService,
   ) {}
+
+  public setSlashingConfig(operatorIndex: number, nodesToSlash: number, slashAtEpoch: number): void {
+    this.operatorSlashingConfig = {
+      operatorIndex,
+      nodesToSlash,
+      slashAtEpoch,
+    };
+    this.slashedNodeCount = 0;
+    this.slashedValidators.clear();
+    this.logger.log(`Set to slash ${nodesToSlash} nodes from operator ${operatorIndex} at epoch ${slashAtEpoch}`);
+  }
+
+  public clearMockData(): void {
+    this.operatorSlashingConfig = null;
+    this.slashedValidators.clear();
+    this.slashedNodeCount = 0;
+    this.logger.log('All mock data cleared');
+  }
 
   @TrackTask('check-state-duties')
   public async check(epoch: Epoch, stateSlot: Slot): Promise<void> {
@@ -61,15 +97,59 @@ export class StateService {
       0,
       validators.length,
     );
+
     for (let index = 0; index < validators.length; index++) {
       if (index % 100 === 0) {
         await unblock();
       }
       const node = iterator.next().value;
       const validator = node.value;
-      const status = this.getValidatorStatus(validator, epoch);
       const pubkey = '0x'.concat(Buffer.from(validator.pubkey).toString('hex'));
       const operator = this.registry.getOperatorKey(pubkey);
+      const originalBalance = BigInt(balances.get(index));
+
+      let currentBalance = originalBalance;
+      let status = this.getValidatorStatus(validator, epoch);
+      let isSlashed = false;
+
+      // Check if this validator should be slashed
+      if (
+        this.operatorSlashingConfig &&
+        epoch >= this.operatorSlashingConfig.slashAtEpoch &&
+        operator?.operatorIndex === this.operatorSlashingConfig.operatorIndex
+      ) {
+        let slashedState = this.slashedValidators.get(pubkey);
+
+        // New validator to be slashed
+        if (!slashedState && this.slashedNodeCount < this.operatorSlashingConfig.nodesToSlash) {
+          slashedState = {
+            slashed: true,
+            slashedBalance: originalBalance - SLASHING_PENALTY,
+            exitEpoch: epoch + 1,
+            withdrawableEpoch: epoch + 257,
+          };
+          this.slashedValidators.set(pubkey, slashedState);
+          this.slashedNodeCount++;
+          this.logger.log(
+            `Validator ${pubkey} slashed at epoch ${epoch} (${this.slashedNodeCount}/${this.operatorSlashingConfig.nodesToSlash})`,
+          );
+        }
+
+        // Apply slashed state if this validator was slashed
+        if (slashedState) {
+          currentBalance = slashedState.slashedBalance;
+          isSlashed = true;
+
+          if (epoch >= slashedState.withdrawableEpoch) {
+            status = ValStatus.WithdrawalPossible;
+          } else if (epoch >= slashedState.exitEpoch) {
+            status = ValStatus.ExitedSlashed;
+          } else {
+            status = ValStatus.ActiveSlashed;
+          }
+        }
+      }
+
       const v = {
         epoch,
         val_id: index,
@@ -77,23 +157,29 @@ export class StateService {
         val_nos_module_id: operator?.moduleIndex,
         val_nos_id: operator?.operatorIndex,
         val_nos_name: operator?.operatorName,
-        val_slashed: validator.slashed,
+        val_slashed: isSlashed || validator.slashed,
         val_status: status,
-        val_balance: BigInt(balances.get(index)),
-        val_effective_balance: BigInt(validator.effectiveBalance),
+        val_balance: currentBalance,
+        val_effective_balance: isSlashed
+          ? BigInt(Math.min(Number(currentBalance), Number(validator.effectiveBalance)))
+          : BigInt(validator.effectiveBalance),
         val_stuck: stuckKeys.includes(pubkey),
       };
+
       this.summary.epoch(epoch).set(v);
+
       if ([ValStatus.ActiveOngoing, ValStatus.ActiveExiting, ValStatus.ActiveSlashed].includes(status)) {
         activeValidatorsCount++;
-        activeValidatorsEffectiveBalance += BigInt(validator.effectiveBalance) / BigInt(10 ** 9);
+        activeValidatorsEffectiveBalance += BigInt(v.val_effective_balance) / BigInt(10 ** 9);
       }
     }
+
     const baseReward = Math.trunc(
       BigNumber.from(64 * 10 ** 9)
         .div(bigNumberSqrt(BigNumber.from(activeValidatorsEffectiveBalance).mul(10 ** 9)))
         .toNumber(),
     );
+
     this.summary.epoch(epoch).setMeta({
       state: {
         active_validators: activeValidatorsCount,
@@ -103,7 +189,6 @@ export class StateService {
     });
   }
 
-  //https://github.com/ChainSafe/lodestar/blob/stable/packages/beacon-node/src/api/impl/beacon/state/utils.ts
   public getValidatorStatus(validator: any, currentEpoch: Epoch): ValStatus {
     // pending
     if (validator.activationEpoch > currentEpoch) {
