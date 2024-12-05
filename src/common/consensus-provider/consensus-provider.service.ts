@@ -230,7 +230,7 @@ export class ConsensusProviderService {
 
     const forkName = headers['eth-consensus-version'] as keyof typeof ForkName;
     const bodyBytes = new Uint8Array(await body.arrayBuffer());
-    this.logger.debug(`Received state data for stateId ${stateId}: ${bodyBytes.length} bytes`);
+    this.logger.log(`Received state data for stateId ${stateId}: ${bodyBytes.length} bytes`);
     // ugly hack to import ESModule to CommonJS project
     ssz = await eval(`import('@lodestar/types').then((m) => m.ssz)`);
     return ssz[forkName].BeaconState.deserializeToView(bodyBytes) as any as ContainerTreeViewType<typeof anySsz.BeaconState.fields>;
