@@ -237,6 +237,9 @@ export class ConsensusProviderService {
     }
 
     const bodyBytes = new Uint8Array(await body.arrayBuffer());
+    
+    this.logger.log(`Received state data for stateId ${stateId}: ${bodyBytes.length} bytes`);
+
 
     // Initialize SSZ if not already done
     if (!this.ssz) {
